@@ -1,11 +1,27 @@
 require('dotenv').config();
 const express = require('express');
 const auth = require('./middleware/auth');
+const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
+
+// CORS
+const allowedOrigin = process.env.CORS_ALLOWED_ORIGIN || process.env.ALLOWED_ORIGIN || '*';
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigin === '*' || origin === allowedOrigin) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  credentials: true,
+  optionsSuccessStatus: 204
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // parsers
 app.use(express.json({ limit: '10mb' }));
