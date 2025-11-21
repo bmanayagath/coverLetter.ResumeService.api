@@ -18,4 +18,4 @@ ENV NODE_ENV=production
 # Port (Railway will overwrite with its own $PORT)
 EXPOSE 3000
 
-CMD ["node", "src/index.js"]
+CMD ["node", "index.js"]
