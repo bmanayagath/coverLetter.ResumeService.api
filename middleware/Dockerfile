@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
-# Create app directory
-WORKDIR /usr/src/app
+# Use /app as working directory to match common PaaS expectations (Railway)
+WORKDIR /app
 
 # Install app dependencies (production)
 COPY package*.json ./
@@ -11,7 +11,7 @@ RUN npm install --production
 COPY . .
 
 # Ensure uploads directory exists
-RUN mkdir -p /usr/src/app/uploads
+RUN mkdir -p /app/uploads
 
 ENV NODE_ENV=production
 
