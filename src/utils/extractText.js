@@ -26,7 +26,12 @@ async function parsePdfToText(buffer) {
     return (await Promise.resolve(result)) || '';
   }
   // unknown
-  console.error('pdf-parse: unexpected module shape:', util.inspect(pdfModule, { depth: 2 }));
+  try {
+    const keys = pdfModule && typeof pdfModule === 'object' ? Object.keys(pdfModule).slice(0, 10) : [];
+    console.error('pdf-parse: unexpected module shape. typeof=%s keys=%o', typeof pdfModule, keys);
+  } catch (e) {
+    console.error('pdf-parse: unexpected module shape (failed to summarize module)');
+  }
   throw new Error('pdf-parse module does not expose a callable API');
 }
 
