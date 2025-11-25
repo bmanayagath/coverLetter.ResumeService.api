@@ -81,3 +81,56 @@ docker run -e JWT_SECRET="changeme" -p 3000:3000 resumeservice:local
 	- If Railway provides a different port via `PORT` env var, the app will use it automatically.
 
 Example: set `JWT_SECRET` in Railway environment settings to a strong secret. The Docker image does not embed the secret; Railway will inject it at runtime.
+
+## MongoDB & migrations
+
+This project includes a Mongoose model and a migration script to create indexes:
+
+- `src/models/resumeProfile.js` — Mongoose model for `ResumeProfile`.
+- `src/db/connection.js` — helper to connect using `MONGO_URI` env var.
+- `src/repositories/resumeRepository.js` — exports `saveResumeProfile(profileData)` which connects and saves a document.
+- `scripts/migrate.js` — runs `ResumeProfile.init()` to ensure indexes.
+
+Usage (locally or on Railway):
+
+```powershell
+# set MONGO_URI env var before running
+$env:MONGO_URI = 'mongodb://user:pass@host:port/dbname'
+npm run migrate
+```
+
+To save a profile from your code, require the repository and call `saveResumeProfile`:
+
+```javascript
+const { saveResumeProfile } = require('./src/repositories/resumeRepository');
+
+await saveResumeProfile({ userRef: 'user-123', headline: 'Senior Engineer', skills: ['Node.js'] });
+```
+
+Make sure `MONGO_URI` is set in Railway Environment Variables before running the migrate script in their console, or call `saveResumeProfile` from your API handlers after setting `MONGO_URI` in the environment.
+
+### Extracting resume fields with OpenAI
+
+This repo includes a helper to extract structured fields from a resume using OpenAI's Chat Completions API.
+
+- `src/templates/resume_extraction_prompt.txt` — prompt template describing the schema and output rules; keep this as the canonical prompt.
+- `src/services/openaiExtractor.js` — exports `extractResumeProfile(resumeText, userRef)` which sends the prompt + resume text to OpenAI and returns parsed JSON.
+
+Usage:
+
+1. Set `OPENAI_API_KEY` in your environment (Railway environment variables or local `.env`).
+
+2. Call the extractor with the resume text you extract from the uploaded file:
+
+```javascript
+const { extractResumeProfile } = require('./src/services/openaiExtractor');
+
+const resumeText = '... extracted text from PDF or DOCX ...';
+const result = await extractResumeProfile(resumeText, 'user-123');
+console.log(result);
+```
+
+Notes:
+- The prompt template in `src/templates/resume_extraction_prompt.txt` is intended to be the canonical prompt you can tune. Keep it stable for reproducible extraction results.
+- The extractor expects the model to return JSON only; when the model returns additional text the service attempts to locate and parse a JSON object in the response.
+- This helper does not save the result to MongoDB; use `saveResumeProfile(result)` from `src/repositories/resumeRepository.js` when you want to persist.

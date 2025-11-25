@@ -3,8 +3,11 @@ const express = require('express');
 const auth = require('./middleware/auth');
 const cors = require('cors');
 const multer = require('multer');
+const { extractText, normalizePdfResult } = require('./src/utils/extractText');
 const fs = require('fs');
 const path = require('path');
+const { extractResumeProfile } = require('./src/services/openaiExtractor');
+const { saveResumeProfile } = require('./src/repositories/resumeRepository');
 
 const app = express();
 
@@ -26,7 +29,6 @@ app.options('*', cors(corsOptions));
 // parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.raw({ type: 'application/octet-stream', limit: '10mb' }));
 
 // multer for multipart/form-data uploads (store in memory then save)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -34,6 +36,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // ensure uploads dir exists
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
+const SAVE_EXTRACTED = (process.env.SAVE_EXTRACTED === 'true');
 
 app.get('/', (req, res) => res.send('ResumeService API running'));
 
@@ -42,62 +45,69 @@ app.post('/login', (req, res) => {
   const jwt = require('jsonwebtoken');
   const { username } = req.body || {};
   if (!username) return res.status(400).json({ error: 'username required in JSON body' });
-  // Accept secret from environment (JWT_SECRET) or alias JST_SECRET (Railway)
   const secret = process.env.JWT_SECRET;
   const token = jwt.sign({ username }, secret, { expiresIn: '1h' });
   res.json({ token });
 });
 
-// Protected route: requires valid JWT
-app.get('/protected', auth, (req, res) => {
-  res.json({ message: 'Protected data', user: req.user });
-});
+// Simplified upload: only handles multipart/form-data (field "file")
+app.post('/coverletter/upload', auth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded (field: file)' });
 
-// Upload endpoint: accepts multipart/form-data (field `file`), application/octet-stream,
-// or JSON: { filename, data } where data is base64 string
-app.post('/coverletter/upload', auth, async (req, res) => {
-  try { 
-    // multipart/form-data handled via multer
-    if (req.is('multipart/form-data')) {
-      // call multer single handler
-      return upload.single('file')(req, res, err => {
-        if (err) return res.status(400).json({ error: 'Upload error', details: err.message });
-        if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name: file)' });
-        const filename = req.file.originalname || `upload-${Date.now()}`;
-        const saveTo = path.join(uploadsDir, filename);
-        fs.writeFileSync(saveTo, req.file.buffer);
-        return res.json({ message: 'Uploaded (multipart)', filename, size: req.file.size, path: saveTo });
-      });
+    // basic file type/size validation
+    const allowedExt = ['.pdf', '.doc', '.docx', '.txt'];
+    const orig = path.basename(req.file.originalname || '');
+    const ext = path.extname(orig).toLowerCase();
+    if (!allowedExt.includes(ext)) return res.status(400).json({ error: 'Invalid file type' });
+
+    // sanitize and create unique filename
+    const safeName = `${Date.now()}-${orig.replace(/[^a-z0-9.\-_]/gi, '_')}`;
+    const saveTo = path.join(uploadsDir, safeName);
+
+    fs.writeFileSync(saveTo, req.file.buffer);
+
+    // extractText and normalizePdfResult are provided by src/utils/extractText
+
+    // use the specialized PDF normalizer for PDFs, otherwise use extractText
+    let text = '';
+    if (ext === '.pdf') {
+      text = await normalizePdfResult(req.file.buffer);
+    } else {
+      text = await extractText(req.file.buffer, ext);
+    }
+    debugger;
+    // attempt structured extraction via OpenAI
+    let extractedProfile = null;
+    try {
+      const userRef = (req.user && req.user.email) ? req.user.email : null;
+      extractedProfile = await extractResumeProfile(text || '', userRef);
+    } catch (e) {
+      console.warn('extractResumeProfile failed:', e && e.message);
     }
 
-    // application/octet-stream
-    if (req.is('application/octet-stream')) {
-      const filename = req.query.filename || `upload-${Date.now()}.bin`;
-      const buffer = req.body;
-      if (!Buffer.isBuffer(buffer) || buffer.length === 0) return res.status(400).json({ error: 'Empty binary body' });
-      const saveTo = path.join(uploadsDir, filename);
-      fs.writeFileSync(saveTo, buffer);
-      return res.json({ message: 'Uploaded (octet-stream)', filename, size: buffer.length, path: saveTo });
+    // optionally persist extracted profile to MongoDB when enabled
+    let savedProfile = null;
+    if (extractedProfile) {
+      try {
+        savedProfile = await saveResumeProfile(extractedProfile);
+      } catch (e) {
+        console.warn('saveResumeProfile failed:', e && e.message);
+      }
     }
 
-    // JSON with base64 data
-    if (req.is('application/json')) {
-      const { filename, data } = req.body || {};
-      if (!data) return res.status(400).json({ error: 'JSON must include base64 `data` field' });
-      const buffer = Buffer.from(data, 'base64');
-      const fname = filename || `upload-${Date.now()}`;
-      const saveTo = path.join(uploadsDir, fname);
-      fs.writeFileSync(saveTo, buffer);
-      return res.json({ message: 'Uploaded (base64 JSON)', filename: fname, size: buffer.length, path: saveTo });
-    }
-
-    return res.status(415).json({ error: 'Unsupported Content-Type. Use multipart/form-data, application/octet-stream, or application/json with base64 data.' });
+    return res.json({
+      message: 'Uploaded',
+      filename: safeName
+    });
   } catch (err) {
-    return res.status(500).json({ error: 'Server error', details: err.message });
+    const errorId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    console.error(`Upload error [${errorId}]:`, err);
+    return res.status(500).json({ error: 'Server error', errorId });
   }
 });
 
-
+// normalizePdfResult is provided by src/utils/extractText
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
