@@ -76,25 +76,23 @@ app.post('/coverletter/upload', auth, upload.single('file'), async (req, res) =>
     } else {
       text = await extractText(req.file.buffer, ext);
     }
-    debugger;
-    // attempt structured extraction via OpenAI
-    let extractedProfile = null;
-    try {
-      const userRef = (req.user && req.user.email) ? req.user.email : null;
-      extractedProfile = await extractResumeProfile(text || '', userRef);
-    } catch (e) {
-      console.warn('extractResumeProfile failed:', e && e.message);
+
+    // attempt structured extraction via OpenAI (throw on failure)
+    const userRef = (req.user && req.user.email) ? req.user.email : null;
+    const extractedProfile = await extractResumeProfile(text || '', userRef);
+    if (!extractedProfile) {
+      throw new Error('Failed to extract resume profile');
     }
 
     // optionally persist extracted profile to MongoDB when enabled
     let savedProfile = null;
-    if (extractedProfile) {
-      try {
-        savedProfile = await saveResumeProfile(extractedProfile);
-      } catch (e) {
-        console.warn('saveResumeProfile failed:', e && e.message);
+    if (SAVE_EXTRACTED) {
+      savedProfile = await saveResumeProfile(extractedProfile);
+      if (!savedProfile) {
+      throw new Error('Failed to save extracted resume profile');
       }
     }
+    
 
     return res.json({
       message: 'Uploaded',
