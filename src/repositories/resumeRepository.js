@@ -14,4 +14,18 @@ async function saveResumeProfile(profileData) {
   return doc.save();
 }
 
-module.exports = { saveResumeProfile };
+async function getResumeProfileById(id) {
+  const mongoUri = process.env.MONGO_URI;
+  if (!mongoUri) throw new Error('MONGO_URI must be set to query resume profiles');
+  await db.connect(mongoUri);
+  return ResumeProfile.findById(id).lean();
+}
+
+async function findOneByUserRef(userRef) {
+  const mongoUri = process.env.MONGO_URI;
+  if (!mongoUri) throw new Error('MONGO_URI must be set to query resume profiles');
+  await db.connect(mongoUri);
+  return ResumeProfile.findOne({ userRef }).lean();
+}
+
+module.exports = { saveResumeProfile, getResumeProfileById, findOneByUserRef };

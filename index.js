@@ -8,6 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const { extractResumeProfile } = require('./src/services/openaiExtractor');
 const { saveResumeProfile } = require('./src/repositories/resumeRepository');
+const { getResumeProfileById, findOneByUserRef } = require('./src/repositories/resumeRepository');
+const { generateCoverLetterText, pdfFromText } = require('./src/services/coverLetterGenerator');
 
 const app = express();
 
@@ -39,6 +41,30 @@ fs.mkdirSync(uploadsDir, { recursive: true });
 const SAVE_EXTRACTED = (process.env.SAVE_EXTRACTED === 'true');
 
 app.get('/', (req, res) => res.send('ResumeService API running'));
+
+// Generate cover letter and return PDF
+app.post('/coverletter/generate', auth, express.json(), async (req, res) => {
+  try {
+    const { hiringManager, companyName, regionStyle, jobDescription } = req.body || {};
+
+    // load profile by id or by userRef
+    let profile = null;
+    const userRef = req.user && req.user.email ? req.user.email : null;
+    if (userRef) profile = await findOneByUserRef(userRef);
+    if (!profile) return res.status(404).json({ error: 'Resume profile not found' });
+
+    const form = { hiringManager, companyName, regionStyle, jobDescription };
+    const coverText = await generateCoverLetterText(profile, form);
+    const pdfBuf = await pdfFromText(coverText);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename=coverletter.pdf');
+    return res.send(pdfBuf);
+  } catch (err) {
+    console.error('Generate error:', err);
+    return res.status(500).json({ error: 'Failed to generate cover letter' });
+  }
+});
 
 // Public route: returns a token for demo purposes
 app.post('/login', (req, res) => {
@@ -77,26 +103,33 @@ app.post('/coverletter/upload', auth, upload.single('file'), async (req, res) =>
       text = await extractText(req.file.buffer, ext);
     }
 
-    // attempt structured extraction via OpenAI (throw on failure)
-    const userRef = (req.user && req.user.email) ? req.user.email : null;
-    const extractedProfile = await extractResumeProfile(text || '', userRef);
-    if (!extractedProfile) {
-      throw new Error('Failed to extract resume profile');
+    // attempt structured extraction via OpenAI
+    let extractedProfile = null;
+    try {
+      const userRef = (req.user && req.user.email) ? req.user.email : null;
+      extractedProfile = await extractResumeProfile(text || '', userRef);
+    } catch (e) {
+      console.warn('extractResumeProfile failed:', e && e.message);
     }
 
     // optionally persist extracted profile to MongoDB when enabled
     let savedProfile = null;
-    if (SAVE_EXTRACTED) {
-      savedProfile = await saveResumeProfile(extractedProfile);
-      if (!savedProfile) {
-      throw new Error('Failed to save extracted resume profile');
+    if (extractedProfile && SAVE_EXTRACTED) {
+      try {
+        savedProfile = await saveResumeProfile(extractedProfile);
+      } catch (e) {
+        console.warn('saveResumeProfile failed:', e && e.message);
       }
     }
-    
 
     return res.json({
       message: 'Uploaded',
-      filename: safeName
+      filename: safeName,
+      size: req.file.size,
+      path: saveTo,
+      text,
+      extractedProfile,
+      savedProfile
     });
   } catch (err) {
     const errorId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
