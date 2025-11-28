@@ -38,7 +38,6 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // ensure uploads dir exists
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
-const SAVE_EXTRACTED = (process.env.SAVE_EXTRACTED === 'true');
 
 app.get('/', (req, res) => res.send('ResumeService API running'));
 
@@ -114,7 +113,7 @@ app.post('/coverletter/upload', auth, upload.single('file'), async (req, res) =>
 
     // optionally persist extracted profile to MongoDB when enabled
     let savedProfile = null;
-    if (extractedProfile && SAVE_EXTRACTED) {
+    if (extractedProfile) {
       try {
         savedProfile = await saveResumeProfile(extractedProfile);
       } catch (e) {
